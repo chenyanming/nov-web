@@ -383,6 +383,7 @@ If FILE is an EPUB, unzip it to `nov-web-inject-output-dir' and go to TOC."
       (kill-current-buffer)))
   file)
 
+;;;###autoload
 (defun nov-web-find-page (file &optional arg new-session)
   "Open a FILE with nov-web."
   (interactive
@@ -468,6 +469,7 @@ If FILE is an EPUB, unzip it to `nov-web-inject-output-dir' and go to TOC."
           (setq-local nov-metadata metadata)
           (setq-local nov-epub-version epub))))))
 
+;;;###autoload
 (defun nov-web-goto-toc ()
   "Go to the TOC index and render the TOC document."
   (interactive)
