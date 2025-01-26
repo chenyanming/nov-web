@@ -1,6 +1,6 @@
 ;;; nov-web.el --- nov-web - read epub in web -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2022 Damon Chan
+;; Copyright (C) 2025 Damon Chan
 
 ;; Author: Damon Chan <elecming@gmail.com>
 ;; URL: https://github.com/chenyanming/nov-web
@@ -35,10 +35,17 @@
 (require 'cl-lib)
 (require 'evil-core nil 'noerror)
 
-(defcustom nov-web-script (format "
-console.log(\"Hello world\");
-" "")
-  "Javascript scripts used to run in the epub file."
+(defcustom nov-web-script-file
+  (expand-file-name "nov-web.js" (file-name-directory (or load-file-name buffer-file-name)))
+  "Path to the JavaScript file containing nov-web functionality."
+  :group 'nov-web
+  :type 'file)
+
+(defcustom nov-web-script
+  (with-temp-buffer
+    (insert-file-contents nov-web-script-file)
+    (buffer-string))
+  "JavaScript scripts used to run in the epub file."
   :group 'nov-web
   :type 'string)
 
