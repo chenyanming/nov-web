@@ -294,10 +294,7 @@ Unnecessary nesting is removed with `nov-web-unnest-directory'."
   (format "%s%s.%s"
           (or (file-name-directory file) "")
           (file-name-base file)
-          (replace-regexp-in-string
-           "x?html?"
-           "html"
-           (file-name-extension file))))
+          (file-name-extension file)))
 
 (defun nov-web-inject (file &optional callback)
   "Inject `nov-web-script', `nov-web-style-light', or `nov-web-style-dark' into FILE.
@@ -309,7 +306,7 @@ Output a new html file prefix by _."
     (make-directory nov-web-inject-output-dir t))
   (let* ((native-path file)
          ;; get new path of the final html file
-         (output-path (string-replace nov-work-dir nov-web-inject-output-dir file))
+         (output-path (string-replace (concat nov-work-dir "/") nov-web-inject-output-dir file))
          ;; create the html if not esists, insert the `nov-web-script' as the html script
          (dom (with-temp-buffer
                 (insert-file-contents native-path)
@@ -480,7 +477,7 @@ If FILE is an EPUB, unzip it to `nov-web-inject-output-dir' and go to TOC."
          (index (nov-find-document (lambda (doc) (eq (car doc) nov-toc-id))))
          (toc nov-toc-id)
          (path (cdr (aref docs index)))
-         (html-path (expand-file-name "toc.html" nov-web-inject-output-dir))
+         (html-path (expand-file-name "toc.html" (file-name-directory (string-replace (concat nov-work-dir "/") nov-web-inject-output-dir path))))
          (html (if (file-exists-p html-path)
                    (with-temp-buffer (insert-file-contents html-path) (buffer-string))
                  ;; it could be empty sting
