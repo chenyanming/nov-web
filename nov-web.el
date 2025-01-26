@@ -256,7 +256,7 @@ Output a new html file prefix by _."
          (output-native-file-name (if (or (string-equal (file-name-extension native-path) "htm")
                                           (string-equal (file-name-extension native-path) "html")
                                           (string-equal (file-name-extension native-path) "xhtml"))
-                                      (format "_%s.html" (file-name-base native-path))
+                                      (format "%s.html" (file-name-base native-path))
                                     (file-name-nondirectory native-path)))
          ;; get full path of the final html file
          (output-native-path (expand-file-name output-native-file-name nov-web-inject-output-dir))
