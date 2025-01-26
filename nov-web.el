@@ -41,13 +41,11 @@
   :group 'nov-web
   :type 'file)
 
-(defcustom nov-web-script
+(defun nov-web-script ()
+  "JavaScript scripts used to run in the epub file."
   (with-temp-buffer
     (insert-file-contents nov-web-script-file)
-    (buffer-string))
-  "JavaScript scripts used to run in the epub file."
-  :group 'nov-web
-  :type 'string)
+    (buffer-string)))
 
 
 (defcustom nov-web-style-light (format "
@@ -229,11 +227,71 @@
   :group 'nov-web
   :type 'directory)
 
+(defcustom nov-web-unzip-program "unzip"
+  "Program used to unzip epub files."
+  :group 'nov-web
+  :type 'string)
+
+(defcustom nov-web-unzip-args '("-o" filename "-d" directory)
+  "Arguments passed to `nov-web-unzip-program'.
+The symbols 'filename' and 'directory' are replaced with their
+actual values."
+  :group 'nov-web
+  :type '(repeat (choice string symbol)))
+
 (defvar nov-web-current-file nil)
 
+(defun nov-web-unnest-directory (directory child)
+  "Move contents of CHILD into DIRECTORY, then delete CHILD."
+  ;; FIXME: this will most certainly fail for con/con
+  (dolist (item (nov-directory-files child))
+    (rename-file item directory))
+  (delete-directory child))
+
+(defun nov-web-contains-nested-directory-p (directory)
+  "Non-nil if DIRECTORY contains exactly one directory."
+  (let* ((files (nov-directory-files directory))
+         (file (car files)))
+    (and (= (length files) 1)
+         (file-directory-p file)
+         file)))
+
+
+(defun nov-web--fix-permissions (file-or-directory mode)
+  (let* ((modes (file-modes file-or-directory))
+         (fixed-mode (file-modes-symbolic-to-number mode modes)))
+    (set-file-modes file-or-directory fixed-mode)))
+
+(defun nov-web-fix-permissions (directory)
+  "Iterate recursively through DIRECTORY to fix its files."
+  (nov--fix-permissions directory "+rx")
+  (dolist (file (nov-directory-files directory))
+    (if (file-directory-p file)
+        (nov-web-fix-permissions file)
+      (nov-web--fix-permissions file "+r"))))
+
+
+(defun nov-web-unzip-epub (directory filename)
+  "Extract FILENAME into DIRECTORY.
+Unnecessary nesting is removed with `nov-web-unnest-directory'."
+  (let* ((status (apply #'call-process nov-web-unzip-program nil "*nov-web unzip*" t
+                        (mapcar (lambda (arg)
+                                  (cond
+                                   ((eq arg 'directory) directory)
+                                   ((eq arg 'filename) filename)
+                                   (t arg)))
+                                nov-web-unzip-args)))
+         child)
+    (while (setq child (nov-web-contains-nested-directory-p directory))
+      (nov-web-unnest-directory directory child))
+    ;; HACK: unzip preserves file permissions, no matter how silly they
+    ;; are, so ensure files and directories are readable
+    (nov-web-fix-permissions directory)
+    status))
+
 (defun nov-web-fix-file-path (file)
-  "Fix the FILE path by prefix _."
-  (format "%s_%s.%s"
+  "Fix the FILE path."
+  (format "%s%s.%s"
           (or (file-name-directory file) "")
           (file-name-base file)
           (replace-regexp-in-string
@@ -250,16 +308,8 @@ Output a new html file prefix by _."
   (unless (file-exists-p nov-web-inject-output-dir)
     (make-directory nov-web-inject-output-dir t))
   (let* ((native-path file)
-         ;; only work on html/xhtml file, rename xhtml as html
-         ;; we need to save to a new html file, because the original file may be read only
-         ;; saving to new html file is easier to tweak
-         (output-native-file-name (if (or (string-equal (file-name-extension native-path) "htm")
-                                          (string-equal (file-name-extension native-path) "html")
-                                          (string-equal (file-name-extension native-path) "xhtml"))
-                                      (format "%s.html" (file-name-base native-path))
-                                    (file-name-nondirectory native-path)))
-         ;; get full path of the final html file
-         (output-native-path (expand-file-name output-native-file-name nov-web-inject-output-dir))
+         ;; get new path of the final html file
+         (output-path (string-replace nov-work-dir nov-web-inject-output-dir file))
          ;; create the html if not esists, insert the `nov-web-script' as the html script
          (dom (with-temp-buffer
                 (insert-file-contents native-path)
@@ -288,14 +338,14 @@ Output a new html file prefix by _."
                                     (_ nov-web-style-light))))
                     (dom-append-child
                      (dom-by-tag dom 'head)
-                     `(script nil ,nov-web-script))
+                     `(script nil ,(nov-web-script)))
                     dom)))
     (if callback
         (funcall callback new-dom))
-    (with-temp-file output-native-path
+    (with-temp-file output-path
       (shr-dom-print new-dom)
       ;; (encode-coding-region (point-min) (point-max) 'utf-8)
-      output-native-path)))
+      output-path)))
 
 (defun nov-web-inject-all-files()
   "Inject `nov-web-style-dark', `nov-web-style-light', or
@@ -313,7 +363,30 @@ also run it after modifing `nov-web-style-dark',
         ;; (setf (cdr document) (nov-web-fix-file-path (cdr document)))
         )))
 
-(defun nov-web-find-file (file &optional arg new-session)
+;;;###autoload
+(defun nov-web-find-file (file)
+  "Open and prepare FILE for viewing in nov-web.
+If FILE is an EPUB, unzip it to `nov-web-inject-output-dir' and go to TOC."
+  (interactive "fFile to open: ")
+  (when (string-equal (file-name-extension file) "epub")
+    (let ((epub-file file))
+      (when epub-file
+        (find-file epub-file))
+      ;; Delete the temp directory
+      (delete-directory nov-web-inject-output-dir t)
+      ;; Unzip to output directory
+      (nov-web-unzip-epub nov-web-inject-output-dir (expand-file-name epub-file))
+      ;; inject all files
+      (nov-web-inject-all-files)
+      ;; Set file to the first HTML file in the unzipped directory
+      (setq file (car (directory-files nov-web-inject-output-dir t "\\.html?$"))
+            nov-web-current-file file)
+      ;; Go to TOC
+      (nov-web-goto-toc)
+      (kill-current-buffer)))
+  file)
+
+(defun nov-web-find-page (file &optional arg new-session)
   "Open a FILE with nov-web."
   (interactive
    (list
@@ -323,8 +396,10 @@ also run it after modifing `nov-web-style-dark',
       (_
        (read-file-name "Webkit find file: ")))
     current-prefix-arg))
+  ;; Prepare file (unzip if EPUB)
+  (setq file (nov-web-find-file file))
   ;; every time to open a file, force inject, so that the scripts are reloaded
-  (let* ((file (nov-web-inject file))
+  (let* ((file (nov-web-inject file)) ;; Inject when open
          ;; get web url of the file
          (path (replace-regexp-in-string
                 " "
@@ -405,7 +480,7 @@ also run it after modifing `nov-web-style-dark',
          (index (nov-find-document (lambda (doc) (eq (car doc) nov-toc-id))))
          (toc nov-toc-id)
          (path (cdr (aref docs index)))
-         (html-path (expand-file-name "toc.html" (file-name-directory path)))
+         (html-path (expand-file-name "toc.html" nov-web-inject-output-dir))
          (html (if (file-exists-p html-path)
                    (with-temp-buffer (insert-file-contents html-path) (buffer-string))
                  ;; it could be empty sting
@@ -426,19 +501,14 @@ also run it after modifing `nov-web-style-dark',
                                               ('light nov-web-style-light)
                                               ('dark nov-web-style-dark)
                                               (_ nov-web-style-light)))
-                                (script nil ,nov-web-script))) )
+                                (script nil ,(nov-web-script)))) )
                     dom))
          (file (with-temp-file html-path
                  (shr-dom-print new-dom)
                  html-path)))
     (when (not index)
       (error "Couldn't locate TOC"))
-    (nov-web-find-file file)
-    (with-current-buffer (buffer-name)
-      (setq-local nov-documents docs)
-      (setq-local nov-documents-index index)
-      (setq-local nov-toc-id toc)
-      (setq-local nov-epub-version epub))))
+    (nov-web-find-page file)))
 
 (provide 'nov-web)
 ;;; nov-web.el ends here
